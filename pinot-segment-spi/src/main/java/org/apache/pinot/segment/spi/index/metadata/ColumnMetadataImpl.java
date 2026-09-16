@@ -70,8 +70,9 @@ import static com.google.common.base.Preconditions.checkElementIndex;
 /// the type default is not handed to the [FieldSpec] at all, so the spec carries the shared static
 /// `FieldSpec.DEFAULT_*` constant and never retains the literal. The [FieldSpec] itself is then interned through
 /// [#FIELD_SPEC_INTERNER], so every segment of a table (and every table with an identical column definition) shares
-/// one instance per distinct spec instead of retaining its own. Callers must treat shared specs and their nested
-/// values as read-only. Deserialize [FieldSpec#toJsonObject()] to make a copy before editing a spec.
+/// one instance per distinct spec instead of retaining its own. Final segment loading can replace an equal spec
+/// with the table schema's instance. Callers must treat shared specs and their nested values as read-only.
+/// Deserialize [FieldSpec#toJsonObject()] to make a copy before editing a spec.
 @SuppressWarnings({"rawtypes", "unchecked"})
 public class ColumnMetadataImpl implements ColumnMetadata {
   private static final long SIZE_MASK = 0xffffffffffffL;
@@ -83,7 +84,7 @@ public class ColumnMetadataImpl implements ColumnMetadata {
   /// any of them and is released once the last one is unloaded. Thread-safe.
   private static final Interner<FieldSpec> FIELD_SPEC_INTERNER = Interners.newWeakInterner();
 
-  private final FieldSpec _fieldSpec;
+  private FieldSpec _fieldSpec;
   private final int _totalDocs;
   private final int _cardinality;
   private final boolean _hasDictionary;
@@ -151,6 +152,11 @@ public class ColumnMetadataImpl implements ColumnMetadata {
   @Override
   public FieldSpec getFieldSpec() {
     return _fieldSpec;
+  }
+
+  /// Replaces an equal spec during final loading, before the segment is published.
+  void setFieldSpec(FieldSpec fieldSpec) {
+    _fieldSpec = fieldSpec;
   }
 
   @Override

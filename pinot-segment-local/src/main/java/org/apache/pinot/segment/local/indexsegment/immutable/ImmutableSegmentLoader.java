@@ -228,6 +228,8 @@ public class ImmutableSegmentLoader {
           segmentMetadata.removeColumn(column);
         }
       }
+      // Preprocessing must compare the stored definitions before matching specs can be shared with the table.
+      segmentMetadata.reuseFieldSpecs(schema);
     } else {
       indexLoadingConfig.addKnownColumns(columnMetadataMap.keySet());
     }

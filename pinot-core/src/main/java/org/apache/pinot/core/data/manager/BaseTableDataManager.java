@@ -135,6 +135,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
 
   protected final ConcurrentHashMap<String, SegmentDataManager> _segmentDataManagerMap = new ConcurrentHashMap<>();
   protected final ServerMetrics _serverMetrics = ServerMetrics.get();
+  private final TableSchemaCache _tableSchemaCache = new TableSchemaCache();
   protected TableUpsertMetadataManager _tableUpsertMetadataManager;
 
   protected InstanceDataManagerConfig _instanceDataManagerConfig;
@@ -431,9 +432,10 @@ public abstract class BaseTableDataManager implements TableDataManager {
     Preconditions.checkState(tableConfig != null, "Failed to find table config for table: %s", _tableNameWithType);
     Schema schema = ZKMetadataProvider.getTableSchema(_propertyStore, _tableNameWithType);
     Preconditions.checkState(schema != null, "Failed to find schema for table: %s", _tableNameWithType);
-    IndexLoadingConfig indexLoadingConfig = new IndexLoadingConfig(_instanceDataManagerConfig, tableConfig, schema);
+    IndexLoadingConfig indexLoadingConfig =
+        new IndexLoadingConfig(_instanceDataManagerConfig, tableConfig, schema, _tableSchemaCache::canonicalize);
     indexLoadingConfig.setTableDataDir(_tableDataDir);
-    updateCachedTableConfigAndSchema(tableConfig, schema);
+    updateCachedTableConfigAndSchema(tableConfig, indexLoadingConfig.getSchema());
     return indexLoadingConfig;
   }
 
