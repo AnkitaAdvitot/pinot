@@ -25,7 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.UnaryOperator;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.segment.local.segment.index.loader.columnminmaxvalue.ColumnMinMaxValueGeneratorMode;
@@ -36,6 +36,7 @@ import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigsUtil;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
+import org.apache.pinot.segment.spi.index.metadata.SegmentSchemaContext;
 import org.apache.pinot.segment.spi.loader.SegmentDirectoryLoaderRegistry;
 import org.apache.pinot.spi.config.instance.InstanceDataManagerConfig;
 import org.apache.pinot.spi.config.table.FieldConfig;
@@ -63,6 +64,8 @@ public class IndexLoadingConfig {
   private final InstanceDataManagerConfig _instanceDataManagerConfig;
   private final TableConfig _tableConfig;
   private final Schema _schema;
+  @Nullable
+  private final SegmentSchemaContext _segmentSchemaContext;
 
   // These fields can be modified after initialization
   // TODO: Revisit them
@@ -101,19 +104,21 @@ public class IndexLoadingConfig {
   /// TODO: Revisit the init handling. Currently it doesn't apply tiered config override
   public IndexLoadingConfig(@Nullable InstanceDataManagerConfig instanceDataManagerConfig,
       @Nullable TableConfig tableConfig, @Nullable Schema schema) {
-    this(instanceDataManagerConfig, tableConfig, schema, UnaryOperator.identity());
+    this(instanceDataManagerConfig, tableConfig, schema, SegmentSchemaContext::new);
   }
 
   /// Normalizes the supplied schema before choosing a shared instance. The canonicalizer must return an equivalent
-  /// schema that callers treat as read-only. Timestamp-index expansion only modifies the supplied inputs.
+  /// schema context that callers treat as read-only. Timestamp-index expansion only modifies the supplied inputs.
   public IndexLoadingConfig(@Nullable InstanceDataManagerConfig instanceDataManagerConfig,
-      @Nullable TableConfig tableConfig, @Nullable Schema schema, UnaryOperator<Schema> schemaCanonicalizer) {
+      @Nullable TableConfig tableConfig, @Nullable Schema schema,
+      Function<Schema, SegmentSchemaContext> schemaCanonicalizer) {
     _instanceDataManagerConfig = instanceDataManagerConfig;
     _tableConfig = tableConfig;
     if (tableConfig != null && schema != null) {
       TimestampIndexUtils.applyTimestampIndex(tableConfig, schema);
     }
-    _schema = schema != null ? requireNonNull(schemaCanonicalizer.apply(schema)) : null;
+    _segmentSchemaContext = schema != null ? requireNonNull(schemaCanonicalizer.apply(schema)) : null;
+    _schema = _segmentSchemaContext != null ? _segmentSchemaContext.getSchema() : null;
     init();
   }
 
@@ -140,6 +145,11 @@ public class IndexLoadingConfig {
   @Nullable
   public TableConfig getTableConfig() {
     return _tableConfig;
+  }
+
+  @Nullable
+  public SegmentSchemaContext getSegmentSchemaContext() {
+    return _segmentSchemaContext;
   }
 
   @Nullable

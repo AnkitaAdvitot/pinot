@@ -20,25 +20,27 @@ package org.apache.pinot.core.data.manager;
 
 import java.util.Map;
 import javax.annotation.Nullable;
+import org.apache.pinot.segment.spi.index.metadata.SegmentSchemaContext;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 
 
-/// Shares the latest normalized schema across a table's segment loads. Concurrent equal inputs reuse one instance;
+/// Shares the latest normalized schema and metadata definitions across a table's segment loads. Equal inputs reuse
+/// one parsing context;
 /// a changed schema replaces the cached instance without modifying previously returned schemas. Callers must treat
 /// returned schemas as read-only. Only the latest schema is retained by this cache.
 final class TableSchemaCache {
   @Nullable
-  private Schema _schema;
+  private SegmentSchemaContext _context;
 
-  synchronized Schema canonicalize(Schema schema) {
-    if (_schema != null && _schema.equals(schema)
-        && equalFieldSpecs(_schema.getFieldSpecMap(), schema.getFieldSpecMap())) {
-      return _schema;
+  synchronized SegmentSchemaContext canonicalize(Schema schema) {
+    if (_context != null && _context.getSchema().equals(schema)
+        && equalFieldSpecs(_context.getSchema().getFieldSpecMap(), schema.getFieldSpecMap())) {
+      return _context;
     }
-    _schema = schema;
-    return schema;
+    _context = new SegmentSchemaContext(schema);
+    return _context;
   }
 
   // ComplexFieldSpec.equals() does not compare its children. Check them recursively before sharing a schema.

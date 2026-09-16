@@ -69,6 +69,7 @@ public class TableSchemaCacheTest {
     IndexLoadingConfig second = manager.fetchIndexLoadingConfig();
     assertNotSame(first.getTableConfig(), second.getTableConfig());
     assertSame(second.getSchema(), first.getSchema());
+    assertSame(second.getSegmentSchemaContext(), first.getSegmentSchemaContext());
     assertSame(second.getSchema().getFieldSpecFor("id"), first.getSchema().getFieldSpecFor("id"));
     assertSame(second.getSchema().getFieldSpecFor("$ts$DAY"), first.getSchema().getFieldSpecFor("$ts$DAY"));
     assertSame(manager.getCachedTableConfigAndSchema().getRight(), second.getSchema());
@@ -91,11 +92,11 @@ public class TableSchemaCacheTest {
     Schema first = schema();
     Schema fresh = Schema.fromString(first.toSingleLineJsonString());
     assertNotSame(first, fresh);
-    assertSame(cache.canonicalize(first), first);
-    assertSame(cache.canonicalize(fresh), first);
+    assertSame(cache.canonicalize(first).getSchema(), first);
+    assertSame(cache.canonicalize(fresh).getSchema(), first);
 
     // Separate table managers must not share their schemas through this cache.
-    assertSame(new TableSchemaCache().canonicalize(fresh), fresh);
+    assertSame(new TableSchemaCache().canonicalize(fresh).getSchema(), fresh);
   }
 
   @DataProvider
@@ -117,13 +118,13 @@ public class TableSchemaCacheTest {
     cache.canonicalize(first);
     Schema changed = schema();
     change.accept(changed);
-    assertSame(cache.canonicalize(changed), changed);
+    assertSame(cache.canonicalize(changed).getSchema(), changed);
     assertEquals(first.getFieldSpecFor("id").getDefaultNullValue(), -1);
     assertFalse(first.isEnableColumnBasedNullHandling());
 
     // An old version is not retained in a history map after a different version replaces it.
     Schema reverted = schema();
-    assertSame(cache.canonicalize(reverted), reverted);
+    assertSame(cache.canonicalize(reverted).getSchema(), reverted);
   }
 
   @Test
@@ -134,7 +135,7 @@ public class TableSchemaCacheTest {
     Schema changed = schema();
     ((DateTimeFieldSpec) changed.getFieldSpecFor("ts")).setSampleValue("1000");
     assertEquals(changed.toJsonObject(), first.toJsonObject());
-    assertSame(cache.canonicalize(changed), changed);
+    assertSame(cache.canonicalize(changed).getSchema(), changed);
   }
 
   @Test
@@ -142,22 +143,22 @@ public class TableSchemaCacheTest {
     TableSchemaCache cache = new TableSchemaCache();
     Schema first = complexSchema();
     cache.canonicalize(first);
-    assertSame(cache.canonicalize(complexSchema()), first);
+    assertSame(cache.canonicalize(complexSchema()).getSchema(), first);
 
     Schema changedDefault = complexSchema();
     nestedValue(changedDefault).setDefaultNullValue(-2);
     assertEquals(changedDefault, first);
-    assertSame(cache.canonicalize(changedDefault), changedDefault);
+    assertSame(cache.canonicalize(changedDefault).getSchema(), changedDefault);
     assertEquals(nestedValue(first).getDefaultNullValue(), -1);
 
     Schema changedType = complexSchema();
     nestedValue(changedType).setDataType(DataType.LONG);
     assertEquals(changedType, changedDefault);
-    assertSame(cache.canonicalize(changedType), changedType);
+    assertSame(cache.canonicalize(changedType).getSchema(), changedType);
 
     Schema removedChild = complexSchema();
     ((ComplexFieldSpec) removedChild.getFieldSpecFor("nested")).getChildFieldSpecs().remove("value");
-    assertSame(cache.canonicalize(removedChild), removedChild);
+    assertSame(cache.canonicalize(removedChild).getSchema(), removedChild);
   }
 
   @Test
@@ -172,7 +173,7 @@ public class TableSchemaCacheTest {
         Schema fresh = schema();
         results.add(executor.submit(() -> {
           assertTrue(start.await(10, TimeUnit.SECONDS));
-          return cache.canonicalize(fresh);
+          return cache.canonicalize(fresh).getSchema();
         }));
       }
       start.countDown();

@@ -57,8 +57,6 @@ import org.apache.pinot.segment.spi.index.startree.StarTreeV2Metadata;
 import org.apache.pinot.segment.spi.store.ColumnIndexUtils;
 import org.apache.pinot.segment.spi.store.SegmentDirectoryPaths;
 import org.apache.pinot.segment.spi.utils.SegmentMetadataUtils;
-import org.apache.pinot.spi.data.ComplexFieldSpec;
-import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.CommonsConfigurationUtils;
 import org.apache.pinot.spi.utils.CommonConstants.Segment.BuiltInVirtualColumn;
@@ -109,13 +107,19 @@ public class SegmentMetadataImpl implements SegmentMetadata {
   /// For segments that can only provide the inputstream to the metadata
   public SegmentMetadataImpl(InputStream metadataPropertiesInputStream, InputStream creationMetaInputStream)
       throws IOException, ConfigurationException {
+    this(metadataPropertiesInputStream, creationMetaInputStream, null);
+  }
+
+  public SegmentMetadataImpl(InputStream metadataPropertiesInputStream, InputStream creationMetaInputStream,
+      @Nullable SegmentSchemaContext schemaContext)
+      throws IOException, ConfigurationException {
     _indexDir = null;
     _columnMetadataMap = new TreeMap<>();
     _schema = new Schema();
 
     PropertiesConfiguration segmentMetadataPropertiesConfiguration =
         CommonsConfigurationUtils.fromInputStream(metadataPropertiesInputStream);
-    init(segmentMetadataPropertiesConfiguration);
+    init(segmentMetadataPropertiesConfiguration, schemaContext);
     setTimeInfo(segmentMetadataPropertiesConfiguration);
 
     loadCreationMeta(creationMetaInputStream);
@@ -128,13 +132,18 @@ public class SegmentMetadataImpl implements SegmentMetadata {
   /// If segment metadata file exists in multiple segment version, load the one in highest segment version.
   public SegmentMetadataImpl(File indexDir)
       throws IOException, ConfigurationException {
+    this(indexDir, null);
+  }
+
+  public SegmentMetadataImpl(File indexDir, @Nullable SegmentSchemaContext schemaContext)
+      throws IOException, ConfigurationException {
     _indexDir = indexDir;
     _columnMetadataMap = new TreeMap<>();
     _schema = new Schema();
 
     PropertiesConfiguration segmentMetadataPropertiesConfiguration =
         SegmentMetadataUtils.getPropertiesConfiguration(indexDir);
-    init(segmentMetadataPropertiesConfiguration);
+    init(segmentMetadataPropertiesConfiguration, schemaContext);
     setTimeInfo(segmentMetadataPropertiesConfiguration);
 
     File creationMetaFile = SegmentDirectoryPaths.findCreationMetaFile(indexDir);
@@ -210,7 +219,7 @@ public class SegmentMetadataImpl implements SegmentMetadata {
     }
   }
 
-  private void init(PropertiesConfiguration segmentMetadata)
+  private void init(PropertiesConfiguration segmentMetadata, @Nullable SegmentSchemaContext schemaContext)
       throws ConfigurationException {
     _segmentName = segmentMetadata.getString(Segment.SEGMENT_NAME);
     _totalDocs = segmentMetadata.getInt(Segment.SEGMENT_TOTAL_DOCS);
@@ -239,7 +248,7 @@ public class SegmentMetadataImpl implements SegmentMetadata {
     if (_totalDocs > 0) {
       for (String column : physicalColumns) {
         ColumnMetadata columnMetadata =
-            ColumnMetadataImpl.fromPropertiesConfiguration(segmentMetadata, _totalDocs, column);
+            ColumnMetadataImpl.fromPropertiesConfiguration(segmentMetadata, _totalDocs, column, schemaContext);
         _columnMetadataMap.put(column, columnMetadata);
         _schema.addField(columnMetadata.getFieldSpec());
       }
@@ -267,7 +276,8 @@ public class SegmentMetadataImpl implements SegmentMetadata {
       }
     } else {
       for (String column : physicalColumns) {
-        ColumnMetadata columnMetadata = EmptyColumnMetadata.fromPropertiesConfiguration(segmentMetadata, column);
+        ColumnMetadata columnMetadata =
+            EmptyColumnMetadata.fromPropertiesConfiguration(segmentMetadata, column, schemaContext);
         _columnMetadataMap.put(column, columnMetadata);
         _schema.addField(columnMetadata.getFieldSpec());
       }
@@ -384,60 +394,6 @@ public class SegmentMetadataImpl implements SegmentMetadata {
   @Override
   public SegmentVersion getVersion() {
     return _segmentVersion;
-  }
-
-  /// Reuses equal table-schema field specs after preprocessing, before constructing readers or publishing the segment.
-  /// Mismatched specs retain their segment-specific values. Complex specs are excluded because their equality does
-  /// not compare children. The segment schema remains independently owned and keeps its existing field order.
-  @SuppressWarnings("deprecation") // Preserve legacy TIME specs and the segment schema's field order.
-  public void reuseFieldSpecs(@Nullable Schema tableSchema) {
-    if (tableSchema == null || _totalDocs == 0 || _columnMetadataMap == null || _columnMetadataMap.isEmpty()) {
-      return;
-    }
-    Map<String, FieldSpec> replacements = new HashMap<>();
-    for (Map.Entry<String, ColumnMetadata> entry : _columnMetadataMap.entrySet()) {
-      ColumnMetadata metadata = entry.getValue();
-      if (!(metadata instanceof ColumnMetadataImpl)) {
-        continue;
-      }
-      FieldSpec segmentSpec = metadata.getFieldSpec();
-      if (segmentSpec instanceof ComplexFieldSpec || ((ColumnMetadataImpl) metadata).getParentColumn() != null
-          || !entry.getKey().equals(segmentSpec.getName())) {
-        continue;
-      }
-      FieldSpec tableSpec = tableSchema.getFieldSpecFor(segmentSpec.getName());
-      if (tableSpec != segmentSpec && segmentSpec.equals(tableSpec)) {
-        replacements.put(segmentSpec.getName(), tableSpec);
-      }
-    }
-    if (replacements.isEmpty()) {
-      return;
-    }
-
-    // The collection returned by getAllFieldSpecs() is sorted by name, unlike the per-type lists.
-    List<FieldSpec> orderedSpecs = new ArrayList<>(_schema.size());
-    orderedSpecs.addAll(_schema.getDimensionFieldSpecs());
-    orderedSpecs.addAll(_schema.getMetricFieldSpecs());
-    if (_schema.getTimeFieldSpec() != null) {
-      orderedSpecs.add(_schema.getTimeFieldSpec());
-    }
-    orderedSpecs.addAll(_schema.getDateTimeFieldSpecs());
-    orderedSpecs.addAll(_schema.getComplexFieldSpecs());
-    for (Map.Entry<String, FieldSpec> entry : replacements.entrySet()) {
-      ColumnMetadataImpl metadata = (ColumnMetadataImpl) _columnMetadataMap.remove(entry.getKey());
-      FieldSpec fieldSpec = entry.getValue();
-      metadata.setFieldSpec(fieldSpec);
-      _columnMetadataMap.put(fieldSpec.getName(), metadata);
-      if (entry.getKey().equals(_timeColumn)) {
-        _timeColumn = fieldSpec.getName();
-      }
-    }
-    for (FieldSpec fieldSpec : orderedSpecs) {
-      _schema.removeField(fieldSpec.getName());
-    }
-    for (FieldSpec fieldSpec : orderedSpecs) {
-      _schema.addField(replacements.getOrDefault(fieldSpec.getName(), fieldSpec));
-    }
   }
 
   @Override

@@ -24,6 +24,7 @@ import javax.annotation.Nullable;
 import org.apache.commons.configuration2.PropertiesConfiguration;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.EmptyColumnShape;
+import org.apache.pinot.segment.spi.V1Constants.MetadataKeys.Column;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.config.table.FieldConfig.EncodingType;
@@ -40,7 +41,14 @@ public class EmptyColumnMetadata extends EmptyColumnShape implements ColumnMetad
 
   /// Constructs an [EmptyColumnMetadata] for `column` by reading the field spec and partition info from `config`.
   public static EmptyColumnMetadata fromPropertiesConfiguration(PropertiesConfiguration config, String column) {
-    FieldSpec fieldSpec = ColumnMetadataImpl.extractFieldSpec(column, config);
+    return fromPropertiesConfiguration(config, column, null);
+  }
+
+  static EmptyColumnMetadata fromPropertiesConfiguration(PropertiesConfiguration config, String column,
+      @Nullable SegmentSchemaContext schemaContext) {
+    FieldSpec fieldSpec = ColumnMetadataImpl.extractFieldSpec(column, config,
+        schemaContext != null && config.containsKey(Column.getKeyFor(column, Column.PARENT_COLUMN))
+            ? null : schemaContext);
     PartitionFunction partitionFunction = ColumnMetadataImpl.extractPartitionFunction(column, config);
     Set<Integer> partitions =
         partitionFunction != null ? ColumnMetadataImpl.extractPartitions(column, config) : null;
