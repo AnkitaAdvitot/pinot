@@ -551,6 +551,7 @@ public class ColumnMetadataImplTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation") // Verify interning of legacy TIME metadata without changing its field type.
   public void metricTimeAndDateTimeSpecsAreInterned() {
     FieldSpec metric = parse(FieldType.METRIC, DataType.LONG, null);
     assertSame(parse(FieldType.METRIC, DataType.LONG, null), metric);
