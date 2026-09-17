@@ -704,6 +704,22 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     }
   }
 
+  /// Compares field-spec maps, including nested children of [ComplexFieldSpec].
+  /// The regular [#equals(Object)] comparison does not include complex-field children.
+  public static boolean equalFieldSpecs(Map<String, FieldSpec> left, Map<String, FieldSpec> right) {
+    if (!left.equals(right)) {
+      return false;
+    }
+    for (Map.Entry<String, FieldSpec> entry : left.entrySet()) {
+      if (entry.getValue() instanceof ComplexFieldSpec && !equalFieldSpecs(
+          ((ComplexFieldSpec) entry.getValue()).getChildFieldSpecs(),
+          ((ComplexFieldSpec) right.get(entry.getKey())).getChildFieldSpecs())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) {

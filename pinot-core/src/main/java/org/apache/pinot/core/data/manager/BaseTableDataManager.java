@@ -117,7 +117,6 @@ import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
 import org.apache.pinot.spi.config.table.StarTreeIndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.UpsertConfig;
-import org.apache.pinot.spi.data.ComplexFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.CommonConstants;
@@ -436,27 +435,13 @@ public abstract class BaseTableDataManager implements TableDataManager {
         normalized -> {
           Pair<TableConfig, Schema> cached = _cachedTableConfigAndSchema;
           Schema shared = cached != null ? cached.getRight() : null;
-          return normalized.equals(shared) && equalFieldSpecs(normalized.getFieldSpecMap(), shared.getFieldSpecMap())
+          return normalized.equals(shared)
+              && FieldSpec.equalFieldSpecs(normalized.getFieldSpecMap(), shared.getFieldSpecMap())
               ? shared : normalized;
         });
     indexLoadingConfig.setTableDataDir(_tableDataDir);
     updateCachedTableConfigAndSchema(tableConfig, indexLoadingConfig.getSchema());
     return indexLoadingConfig;
-  }
-
-  // ComplexFieldSpec.equals() does not compare its children. Include them before reusing a cached schema.
-  private static boolean equalFieldSpecs(Map<String, FieldSpec> left, Map<String, FieldSpec> right) {
-    if (!left.equals(right)) {
-      return false;
-    }
-    for (Map.Entry<String, FieldSpec> entry : left.entrySet()) {
-      if (entry.getValue() instanceof ComplexFieldSpec && !equalFieldSpecs(
-          ((ComplexFieldSpec) entry.getValue()).getChildFieldSpecs(),
-          ((ComplexFieldSpec) right.get(entry.getKey())).getChildFieldSpecs())) {
-        return false;
-      }
-    }
-    return true;
   }
 
   @Override
