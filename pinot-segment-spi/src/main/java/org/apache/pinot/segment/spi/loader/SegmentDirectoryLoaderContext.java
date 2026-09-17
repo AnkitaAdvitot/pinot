@@ -19,8 +19,6 @@
 package org.apache.pinot.segment.spi.loader;
 
 import java.util.Map;
-import javax.annotation.Nullable;
-import org.apache.pinot.segment.spi.index.metadata.SegmentSchemaContext;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.ReadMode;
@@ -31,8 +29,6 @@ public class SegmentDirectoryLoaderContext {
   private final ReadMode _readMode;
   private final TableConfig _tableConfig;
   private final Schema _schema;
-  @Nullable
-  private final SegmentSchemaContext _segmentSchemaContext;
   private final String _instanceId;
   private final String _tableDataDir;
   private final String _segmentName;
@@ -43,12 +39,10 @@ public class SegmentDirectoryLoaderContext {
 
   private SegmentDirectoryLoaderContext(ReadMode readMode, TableConfig tableConfig, Schema schema, String instanceId,
       String tableDataDir, String segmentName, String segmentCrc, String segmentTier,
-      Map<String, Map<String, String>> instanceTierConfigs, Map<String, String> segmentCustomConfigs,
-      @Nullable SegmentSchemaContext segmentSchemaContext) {
+      Map<String, Map<String, String>> instanceTierConfigs, Map<String, String> segmentCustomConfigs) {
     _readMode = readMode;
     _tableConfig = tableConfig;
     _schema = schema;
-    _segmentSchemaContext = segmentSchemaContext;
     _instanceId = instanceId;
     _tableDataDir = tableDataDir;
     _segmentName = segmentName;
@@ -64,11 +58,6 @@ public class SegmentDirectoryLoaderContext {
 
   public TableConfig getTableConfig() {
     return _tableConfig;
-  }
-
-  @Nullable
-  public SegmentSchemaContext getSegmentSchemaContext() {
-    return _segmentSchemaContext;
   }
 
   public Schema getSchema() {
@@ -107,8 +96,6 @@ public class SegmentDirectoryLoaderContext {
     private ReadMode _readMode = ReadMode.DEFAULT_MODE;
     private TableConfig _tableConfig;
     private Schema _schema;
-    @Nullable
-    private SegmentSchemaContext _segmentSchemaContext;
     private String _instanceId;
     private String _tableDataDir;
     private String _segmentName;
@@ -124,11 +111,6 @@ public class SegmentDirectoryLoaderContext {
 
     public Builder setTableConfig(TableConfig tableConfig) {
       _tableConfig = tableConfig;
-      return this;
-    }
-
-    public Builder setSegmentSchemaContext(@Nullable SegmentSchemaContext segmentSchemaContext) {
-      _segmentSchemaContext = segmentSchemaContext;
       return this;
     }
 
@@ -174,7 +156,7 @@ public class SegmentDirectoryLoaderContext {
 
     public SegmentDirectoryLoaderContext build() {
       return new SegmentDirectoryLoaderContext(_readMode, _tableConfig, _schema, _instanceId, _tableDataDir,
-          _segmentName, _segmentCrc, _segmentTier, _instanceTierConfigs, _segmentCustomConfigs, _segmentSchemaContext);
+          _segmentName, _segmentCrc, _segmentTier, _instanceTierConfigs, _segmentCustomConfigs);
     }
   }
 }

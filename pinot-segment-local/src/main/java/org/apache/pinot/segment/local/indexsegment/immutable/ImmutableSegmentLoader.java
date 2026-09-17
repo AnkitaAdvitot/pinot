@@ -123,8 +123,7 @@ public class ImmutableSegmentLoader {
     Preconditions.checkArgument(indexDir.isDirectory(), "Index directory: %s does not exist or is not a directory",
         indexDir);
 
-    SegmentMetadataImpl segmentMetadata =
-        new SegmentMetadataImpl(indexDir, indexLoadingConfig.getSegmentSchemaContext());
+    SegmentMetadataImpl segmentMetadata = new SegmentMetadataImpl(indexDir);
     if (segmentMetadata.getTotalDocs() == 0) {
       return new EmptyIndexSegment(segmentMetadata);
     }
@@ -133,7 +132,6 @@ public class ImmutableSegmentLoader {
         .setReadMode(indexLoadingConfig.getReadMode())
         .setTableConfig(indexLoadingConfig.getTableConfig())
         .setSchema(indexLoadingConfig.getSchema())
-        .setSegmentSchemaContext(indexLoadingConfig.getSegmentSchemaContext())
         .setInstanceId(indexLoadingConfig.getInstanceId())
         .setTableDataDir(indexLoadingConfig.getTableDataDir())
         .setSegmentName(segmentName)
@@ -171,8 +169,7 @@ public class ImmutableSegmentLoader {
     Preconditions.checkArgument(indexDir.isDirectory(), "Index directory: %s does not exist or is not a directory",
         indexDir);
 
-    SegmentMetadataImpl segmentMetadata =
-        new SegmentMetadataImpl(indexDir, indexLoadingConfig.getSegmentSchemaContext());
+    SegmentMetadataImpl segmentMetadata = new SegmentMetadataImpl(indexDir);
     if (segmentMetadata.getTotalDocs() > 0) {
       if (segmentOperationsThrottlerSet != null) {
         segmentOperationsThrottlerSet.getSegmentAllIndexPreprocessThrottler().acquire();
@@ -336,7 +333,6 @@ public class ImmutableSegmentLoader {
         .setReadMode(indexLoadingConfig.getReadMode())
         .setTableConfig(indexLoadingConfig.getTableConfig())
         .setSchema(indexLoadingConfig.getSchema())
-        .setSegmentSchemaContext(indexLoadingConfig.getSegmentSchemaContext())
         .setInstanceId(indexLoadingConfig.getInstanceId())
         .setSegmentName(segmentName)
         .setSegmentCrc(segmentCrc)

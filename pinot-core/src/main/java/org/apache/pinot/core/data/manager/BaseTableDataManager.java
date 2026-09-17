@@ -101,7 +101,6 @@ import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigsUtil;
 import org.apache.pinot.segment.spi.index.StandardIndexes;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
-import org.apache.pinot.segment.spi.index.metadata.SegmentSchemaContext;
 import org.apache.pinot.segment.spi.index.multicolumntext.MultiColumnTextMetadata;
 import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
 import org.apache.pinot.segment.spi.loader.SegmentDirectoryLoader;
@@ -178,10 +177,6 @@ public abstract class BaseTableDataManager implements TableDataManager {
 
   // Caches the latest TableConfig and Schema pair. The cache should not be modified.
   protected volatile Pair<TableConfig, Schema> _cachedTableConfigAndSchema;
-  private final Object _tableConfigAndSchemaLock = new Object();
-  // Derived parsing definitions for the cached schema; guarded by _tableConfigAndSchemaLock.
-  @Nullable
-  private SegmentSchemaContext _segmentSchemaContext;
 
   protected volatile boolean _shutDown;
   protected volatile boolean _isDeleted;
@@ -437,44 +432,27 @@ public abstract class BaseTableDataManager implements TableDataManager {
     Preconditions.checkState(tableConfig != null, "Failed to find table config for table: %s", _tableNameWithType);
     Schema schema = ZKMetadataProvider.getTableSchema(_propertyStore, _tableNameWithType);
     Preconditions.checkState(schema != null, "Failed to find schema for table: %s", _tableNameWithType);
-    return createIndexLoadingConfig(tableConfig, schema);
-  }
-
-  @VisibleForTesting
-  IndexLoadingConfig createIndexLoadingConfig(TableConfig tableConfig, Schema schema) {
-    IndexLoadingConfig indexLoadingConfig;
-    synchronized (_tableConfigAndSchemaLock) {
-      indexLoadingConfig = new IndexLoadingConfig(_instanceDataManagerConfig, tableConfig, schema, normalized -> {
-        Pair<TableConfig, Schema> cached = _cachedTableConfigAndSchema;
-        Schema shared = cached != null && normalized.equals(cached.getRight())
-            && equalFieldSpecs(cached.getRight().getFieldSpecMap(), normalized.getFieldSpecMap())
-            ? cached.getRight() : normalized;
-        return _segmentSchemaContext != null && _segmentSchemaContext.getSchema() == shared
-            ? _segmentSchemaContext : new SegmentSchemaContext(shared);
-      });
-      // Publish only after initialization succeeds, so concurrent loads select the same normalized schema.
-      _segmentSchemaContext = indexLoadingConfig.getSegmentSchemaContext();
-      _cachedTableConfigAndSchema = Pair.of(tableConfig, indexLoadingConfig.getSchema());
-    }
+    IndexLoadingConfig indexLoadingConfig = new IndexLoadingConfig(_instanceDataManagerConfig, tableConfig, schema,
+        normalized -> {
+          Pair<TableConfig, Schema> cached = _cachedTableConfigAndSchema;
+          Schema shared = cached != null ? cached.getRight() : null;
+          return normalized.equals(shared) && equalFieldSpecs(normalized.getFieldSpecMap(), shared.getFieldSpecMap())
+              ? shared : normalized;
+        });
     indexLoadingConfig.setTableDataDir(_tableDataDir);
-    // Keep extension callbacks outside the monitor, at the existing post-initialization boundary.
     updateCachedTableConfigAndSchema(tableConfig, indexLoadingConfig.getSchema());
     return indexLoadingConfig;
   }
 
-  // ComplexFieldSpec.equals() does not compare its children. Check them before reusing the cached schema.
+  // ComplexFieldSpec.equals() does not compare its children. Include them before reusing a cached schema.
   private static boolean equalFieldSpecs(Map<String, FieldSpec> left, Map<String, FieldSpec> right) {
-    if (!left.keySet().equals(right.keySet())) {
+    if (!left.equals(right)) {
       return false;
     }
     for (Map.Entry<String, FieldSpec> entry : left.entrySet()) {
-      FieldSpec leftSpec = entry.getValue();
-      FieldSpec rightSpec = right.get(entry.getKey());
-      if (!leftSpec.equals(rightSpec)) {
-        return false;
-      }
-      if (leftSpec instanceof ComplexFieldSpec && !equalFieldSpecs(
-          ((ComplexFieldSpec) leftSpec).getChildFieldSpecs(), ((ComplexFieldSpec) rightSpec).getChildFieldSpecs())) {
+      if (entry.getValue() instanceof ComplexFieldSpec && !equalFieldSpecs(
+          ((ComplexFieldSpec) entry.getValue()).getChildFieldSpecs(),
+          ((ComplexFieldSpec) right.get(entry.getKey())).getChildFieldSpecs())) {
         return false;
       }
     }
@@ -488,12 +466,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
 
   @Override
   public void updateCachedTableConfigAndSchema(TableConfig tableConfig, Schema schema) {
-    synchronized (_tableConfigAndSchemaLock) {
-      _cachedTableConfigAndSchema = Pair.of(tableConfig, schema);
-      if (_segmentSchemaContext != null && _segmentSchemaContext.getSchema() != schema) {
-        _segmentSchemaContext = null;
-      }
-    }
+    _cachedTableConfigAndSchema = Pair.of(tableConfig, schema);
   }
 
   @Override

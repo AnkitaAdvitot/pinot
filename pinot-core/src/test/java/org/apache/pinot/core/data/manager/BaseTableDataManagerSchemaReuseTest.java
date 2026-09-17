@@ -26,7 +26,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.utils.helix.FakePropertyStore;
 import org.apache.pinot.core.data.manager.offline.OfflineTableDataManager;
@@ -38,178 +37,100 @@ import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.TimestampConfig;
 import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.ComplexFieldSpec;
-import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
-import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
-import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotSame;
 import static org.testng.Assert.assertSame;
-import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
 
-/// Verifies table-scoped schema identity across fresh loads, concurrent loads, and schema evolution.
+/// Verifies schema reuse through the table manager's existing cache without hiding schema or index-config changes.
 public class BaseTableDataManagerSchemaReuseTest {
   @Test
-  public void testFreshTableManagerFetchesShareSchemaAndObserveChanges() {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    manager._propertyStore = new FakePropertyStore();
-    manager._tableNameWithType = "testTable_OFFLINE";
-    TableConfig table = timestampTable(TimestampIndexGranularity.DAY);
-    ZKMetadataProvider.setTableConfig(manager._propertyStore, table);
-    ZKMetadataProvider.setSchema(manager._propertyStore, schema());
-
+  public void testReuseAndSchemaRefresh() {
+    TableConfig table = new TableConfigBuilder(TableType.OFFLINE).setTableName("testTable").build();
+    Schema original = schema();
+    BaseTableDataManager manager = manager(table, original);
+    manager.updateCachedTableConfigAndSchema(table, original);
     IndexLoadingConfig first = manager.fetchIndexLoadingConfig();
     IndexLoadingConfig second = manager.fetchIndexLoadingConfig();
+    assertSame(first.getSchema(), original);
+    assertSame(second.getSchema(), original);
     assertNotSame(first.getTableConfig(), second.getTableConfig());
-    assertSame(second.getSchema(), first.getSchema());
-    assertSame(second.getSegmentSchemaContext(), first.getSegmentSchemaContext());
-    assertSame(second.getSchema().getFieldSpecFor("id"), first.getSchema().getFieldSpecFor("id"));
-    assertSame(second.getSchema().getFieldSpecFor("$ts$DAY"), first.getSchema().getFieldSpecFor("$ts$DAY"));
-    assertSame(manager.getCachedTableConfigAndSchema().getRight(), second.getSchema());
 
     Schema changed = schema();
     changed.getFieldSpecFor("id").setDefaultNullValue(-2);
     ZKMetadataProvider.setSchema(manager._propertyStore, changed);
-    IndexLoadingConfig third = manager.fetchIndexLoadingConfig();
-    assertNotSame(third.getSchema(), first.getSchema());
-    assertEquals(third.getSchema().getFieldSpecFor("id").getDefaultNullValue(), -2);
-    assertEquals(first.getSchema().getFieldSpecFor("id").getDefaultNullValue(), -1);
-    assertSame(manager.getCachedTableConfigAndSchema().getRight(), third.getSchema());
-    assertSame(manager.fetchIndexLoadingConfig().getSchema(), third.getSchema());
+    Schema refreshed = manager.fetchIndexLoadingConfig().getSchema();
+    assertNotSame(refreshed, original);
+    assertEquals(refreshed.getFieldSpecFor("id").getDefaultNullValue(), -2);
+    assertEquals(original.getFieldSpecFor("id").getDefaultNullValue(), -1);
+    assertSame(manager.getCachedTableConfigAndSchema().getRight(), refreshed);
+    assertSame(manager.fetchIndexLoadingConfig().getSchema(), refreshed);
+
+    manager.updateCachedTableConfigAndSchema(table, changed);
+    assertSame(manager.fetchIndexLoadingConfig().getSchema(), changed);
   }
 
   @Test
-  public void testEqualFreshSchemasReuseLatestInstance()
+  public void testTimestampNormalizationBeforeReuse() {
+    BaseTableDataManager manager = manager(timestampTable(TimestampIndexGranularity.DAY), schema());
+    Schema first = manager.fetchIndexLoadingConfig().getSchema();
+    IndexLoadingConfig second = manager.fetchIndexLoadingConfig();
+    assertSame(second.getSchema(), first);
+    assertTrue(first.hasColumn("$ts$DAY"));
+    assertTrue(second.getFieldIndexConfigByColName().get("$ts$DAY").getConfig(StandardIndexes.range()).isEnabled());
+    assertEquals(second.getTableConfig().getIndexingConfig().getRangeIndexColumns(), List.of("$ts$DAY"));
+    assertEquals(second.getTableConfig().getIngestionConfig().getTransformConfigs().size(), 1);
+
+    ZKMetadataProvider.setTableConfig(manager._propertyStore, timestampTable(TimestampIndexGranularity.HOUR));
+    Schema changed = manager.fetchIndexLoadingConfig().getSchema();
+    assertNotSame(changed, first);
+    assertTrue(changed.hasColumn("$ts$HOUR"));
+    assertFalse(changed.hasColumn("$ts$DAY"));
+    assertFalse(first.hasColumn("$ts$HOUR"));
+  }
+
+  @Test
+  public void testNestedChangesAreNotHiddenBySchemaEquality() {
+    Schema original = complexSchema(-1);
+    BaseTableDataManager manager = manager(timestampTable(TimestampIndexGranularity.DAY), original);
+    Schema first = manager.fetchIndexLoadingConfig().getSchema();
+    assertSame(manager.fetchIndexLoadingConfig().getSchema(), first);
+
+    Schema changed = complexSchema(-2);
+    assertEquals(changed, original);
+    ZKMetadataProvider.setSchema(manager._propertyStore, changed);
+    Schema refreshed = manager.fetchIndexLoadingConfig().getSchema();
+    assertNotSame(refreshed, first);
+    ComplexFieldSpec nested = (ComplexFieldSpec) refreshed.getFieldSpecFor("nested");
+    assertEquals(((ComplexFieldSpec) nested.getChildFieldSpec("value")).getChildFieldSpec("value")
+        .getDefaultNullValue(), -2);
+    assertSame(manager.fetchIndexLoadingConfig().getSchema(), refreshed);
+  }
+
+  @Test
+  public void testConcurrentLoadsReuseCachedSchema()
       throws Exception {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    Schema first = schema();
-    Schema fresh = Schema.fromString(first.toSingleLineJsonString());
-    assertNotSame(first, fresh);
-    assertSame(manager.createIndexLoadingConfig(table(), first).getSchema(), first);
-    assertSame(manager.createIndexLoadingConfig(table(), fresh).getSchema(), first);
-
-    // Separate table managers must not share their schemas through this cache.
-    BaseTableDataManager otherManager = new OfflineTableDataManager();
-    assertSame(otherManager.createIndexLoadingConfig(table(), fresh).getSchema(), fresh);
-  }
-
-  @Test
-  public void testExistingCachedSchemaIsTheSourceOfSharedIdentity() {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    Schema cached = schema();
-    manager.updateCachedTableConfigAndSchema(table(), cached);
-    IndexLoadingConfig first = manager.createIndexLoadingConfig(table(), schema());
-    assertSame(first.getSchema(), cached);
-
-    Schema replacement = schema();
-    manager.updateCachedTableConfigAndSchema(table(), replacement);
-    IndexLoadingConfig second = manager.createIndexLoadingConfig(table(), schema());
-    assertSame(second.getSchema(), replacement);
-    assertNotSame(second.getSegmentSchemaContext(), first.getSegmentSchemaContext());
-  }
-
-  @Test
-  public void testFailedLoadingConfigDoesNotReplaceCachedSchema() {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    IndexLoadingConfig first = manager.createIndexLoadingConfig(table(), schema());
-    TableConfig invalid = table();
-    invalid.getIndexingConfig().setLoadMode("INVALID");
-    Schema changed = schema();
-    changed.getFieldSpecFor("id").setDefaultNullValue(-2);
-    assertThrows(IllegalArgumentException.class, () -> manager.createIndexLoadingConfig(invalid, changed));
-    assertSame(manager.getCachedTableConfigAndSchema().getLeft(), first.getTableConfig());
-    assertSame(manager.getCachedTableConfigAndSchema().getRight(), first.getSchema());
-    assertSame(manager.createIndexLoadingConfig(table(), schema()).getSegmentSchemaContext(),
-        first.getSegmentSchemaContext());
-  }
-
-  @DataProvider
-  public Object[][] schemaChanges() {
-    return new Object[][]{
-        {(Consumer<Schema>) schema -> schema.getFieldSpecFor("id").setDefaultNullValue(-2)},
-        {(Consumer<Schema>) schema -> schema.getFieldSpecFor("id").setDataType(DataType.LONG)},
-        {(Consumer<Schema>) schema -> schema.getFieldSpecFor("id").setNotNull(true)},
-        {(Consumer<Schema>) schema -> schema.setEnableColumnBasedNullHandling(true)},
-        {(Consumer<Schema>) schema -> schema.getFieldSpecFor("id").setDescription("changed")},
-        {(Consumer<Schema>) schema -> schema.setPrimaryKeyColumns(List.of("id"))}
-    };
-  }
-
-  @Test(dataProvider = "schemaChanges")
-  public void testSchemaChangesReplaceLatestInstance(Consumer<Schema> change) {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    Schema first = schema();
-    manager.createIndexLoadingConfig(table(), first);
-    Schema changed = schema();
-    change.accept(changed);
-    assertSame(manager.createIndexLoadingConfig(table(), changed).getSchema(), changed);
-    assertEquals(first.getFieldSpecFor("id").getDefaultNullValue(), -1);
-    assertFalse(first.isEnableColumnBasedNullHandling());
-
-    // An old version is not retained in a history map after a different version replaces it.
-    Schema reverted = schema();
-    assertSame(manager.createIndexLoadingConfig(table(), reverted).getSchema(), reverted);
-  }
-
-  @Test
-  public void testChangedSampleValueIsNotHiddenByJsonSerialization() {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    Schema first = schema();
-    manager.createIndexLoadingConfig(table(), first);
-    Schema changed = schema();
-    ((DateTimeFieldSpec) changed.getFieldSpecFor("ts")).setSampleValue("1000");
-    assertEquals(changed.toJsonObject(), first.toJsonObject());
-    assertSame(manager.createIndexLoadingConfig(table(), changed).getSchema(), changed);
-  }
-
-  @Test
-  public void testNestedComplexChangesAreNotHiddenBySchemaEquality() {
-    BaseTableDataManager manager = new OfflineTableDataManager();
-    Schema first = complexSchema();
-    manager.createIndexLoadingConfig(table(), first);
-    assertSame(manager.createIndexLoadingConfig(table(), complexSchema()).getSchema(), first);
-
-    Schema changedDefault = complexSchema();
-    nestedValue(changedDefault).setDefaultNullValue(-2);
-    assertEquals(changedDefault, first);
-    assertSame(manager.createIndexLoadingConfig(table(), changedDefault).getSchema(), changedDefault);
-    assertEquals(nestedValue(first).getDefaultNullValue(), -1);
-
-    Schema changedType = complexSchema();
-    nestedValue(changedType).setDataType(DataType.LONG);
-    assertEquals(changedType, changedDefault);
-    assertSame(manager.createIndexLoadingConfig(table(), changedType).getSchema(), changedType);
-
-    Schema removedChild = complexSchema();
-    ((ComplexFieldSpec) removedChild.getFieldSpecFor("nested")).getChildFieldSpecs().remove("value");
-    assertSame(manager.createIndexLoadingConfig(table(), removedChild).getSchema(), removedChild);
-  }
-
-  @Test
-  public void testConcurrentEqualSchemasShareOneInstance()
-      throws Exception {
-    BaseTableDataManager manager = new OfflineTableDataManager();
+    BaseTableDataManager manager = manager(timestampTable(TimestampIndexGranularity.DAY), schema());
+    Schema shared = manager.fetchIndexLoadingConfig().getSchema();
     ExecutorService executor = Executors.newFixedThreadPool(8);
     CountDownLatch start = new CountDownLatch(1);
     try {
       List<Future<Schema>> results = new ArrayList<>();
       for (int i = 0; i < 32; i++) {
-        Schema fresh = schema();
         results.add(executor.submit(() -> {
           assertTrue(start.await(10, TimeUnit.SECONDS));
-          return manager.createIndexLoadingConfig(table(), fresh).getSchema();
+          return manager.fetchIndexLoadingConfig().getSchema();
         }));
       }
       start.countDown();
-      Schema shared = results.get(0).get(10, TimeUnit.SECONDS);
       for (Future<Schema> result : results) {
         assertSame(result.get(10, TimeUnit.SECONDS), shared);
       }
@@ -219,34 +140,13 @@ public class BaseTableDataManagerSchemaReuseTest {
     }
   }
 
-  @Test
-  public void testTimestampNormalizationPrecedesSchemaSharing() {
+  private static BaseTableDataManager manager(TableConfig table, Schema schema) {
     BaseTableDataManager manager = new OfflineTableDataManager();
-    TableConfig firstTable = timestampTable(TimestampIndexGranularity.DAY);
-    IndexLoadingConfig first = manager.createIndexLoadingConfig(firstTable, schema());
-    Schema shared = first.getSchema();
-    assertTrue(shared.hasColumn("$ts$DAY"));
-    FieldSpec derived = shared.getFieldSpecFor("$ts$DAY");
-
-    TableConfig freshTable = timestampTable(TimestampIndexGranularity.DAY);
-    IndexLoadingConfig second = manager.createIndexLoadingConfig(freshTable, schema());
-    assertSame(second.getSchema(), shared);
-    assertSame(second.getSchema().getFieldSpecFor("$ts$DAY"), derived);
-    assertTrue(second.getFieldIndexConfigByColName().get("$ts$DAY").getConfig(StandardIndexes.range()).isEnabled());
-    assertEquals(freshTable.getIndexingConfig().getRangeIndexColumns(), List.of("$ts$DAY"));
-    assertEquals(freshTable.getIngestionConfig().getTransformConfigs().size(), 1);
-
-    IndexLoadingConfig changed =
-        manager.createIndexLoadingConfig(timestampTable(TimestampIndexGranularity.HOUR), schema());
-    assertNotSame(changed.getSchema(), shared);
-    assertTrue(changed.getSchema().hasColumn("$ts$HOUR"));
-    assertFalse(changed.getSchema().hasColumn("$ts$DAY"));
-    assertFalse(shared.hasColumn("$ts$HOUR"));
-    assertSame(shared.getFieldSpecFor("$ts$DAY"), derived);
-  }
-
-  private static TableConfig table() {
-    return new TableConfigBuilder(TableType.OFFLINE).setTableName("testTable").build();
+    manager._propertyStore = new FakePropertyStore();
+    manager._tableNameWithType = "testTable_OFFLINE";
+    ZKMetadataProvider.setTableConfig(manager._propertyStore, table);
+    ZKMetadataProvider.setSchema(manager._propertyStore, schema);
+    return manager;
   }
 
   private static Schema schema() {
@@ -255,19 +155,12 @@ public class BaseTableDataManagerSchemaReuseTest {
         .addDateTime("ts", DataType.TIMESTAMP, "TIMESTAMP", "1:MILLISECONDS").build();
   }
 
-  private static Schema complexSchema() {
+  private static Schema complexSchema(int defaultValue) {
     Schema schema = schema();
     ComplexFieldSpec child = new ComplexFieldSpec("value", DataType.MAP, true,
-        Map.of("key", new DimensionFieldSpec("key", DataType.STRING, true),
-            "value", new DimensionFieldSpec("value", DataType.INT, true, -1)));
-    schema.addField(new ComplexFieldSpec("nested", DataType.MAP, true,
-        Map.of("key", new DimensionFieldSpec("key", DataType.STRING, true), "value", child)));
+        Map.of("value", new DimensionFieldSpec("value", DataType.INT, true, defaultValue)));
+    schema.addField(new ComplexFieldSpec("nested", DataType.MAP, true, Map.of("value", child)));
     return schema;
-  }
-
-  private static FieldSpec nestedValue(Schema schema) {
-    return ((ComplexFieldSpec) ((ComplexFieldSpec) schema.getFieldSpecFor("nested")).getChildFieldSpec("value"))
-        .getChildFieldSpec("value");
   }
 
   private static TableConfig timestampTable(TimestampIndexGranularity granularity) {

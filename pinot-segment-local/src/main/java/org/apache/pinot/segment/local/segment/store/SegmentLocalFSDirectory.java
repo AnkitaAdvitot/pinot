@@ -144,8 +144,7 @@ public class SegmentLocalFSDirectory extends SegmentDirectory {
   @Override
   public void reloadMetadata()
       throws Exception {
-    _segmentMetadata = new SegmentMetadataImpl(_indexDir,
-        _segmentDirectoryLoaderContext != null ? _segmentDirectoryLoaderContext.getSegmentSchemaContext() : null);
+    _segmentMetadata = new SegmentMetadataImpl(_indexDir);
     _columnIndexDirectory.setSegmentMetadata(_segmentMetadata);
   }
 

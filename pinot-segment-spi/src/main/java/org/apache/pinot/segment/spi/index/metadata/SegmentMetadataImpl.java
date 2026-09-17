@@ -107,19 +107,13 @@ public class SegmentMetadataImpl implements SegmentMetadata {
   /// For segments that can only provide the inputstream to the metadata
   public SegmentMetadataImpl(InputStream metadataPropertiesInputStream, InputStream creationMetaInputStream)
       throws IOException, ConfigurationException {
-    this(metadataPropertiesInputStream, creationMetaInputStream, null);
-  }
-
-  public SegmentMetadataImpl(InputStream metadataPropertiesInputStream, InputStream creationMetaInputStream,
-      @Nullable SegmentSchemaContext schemaContext)
-      throws IOException, ConfigurationException {
     _indexDir = null;
     _columnMetadataMap = new TreeMap<>();
     _schema = new Schema();
 
     PropertiesConfiguration segmentMetadataPropertiesConfiguration =
         CommonsConfigurationUtils.fromInputStream(metadataPropertiesInputStream);
-    init(segmentMetadataPropertiesConfiguration, schemaContext);
+    init(segmentMetadataPropertiesConfiguration);
     setTimeInfo(segmentMetadataPropertiesConfiguration);
 
     loadCreationMeta(creationMetaInputStream);
@@ -132,18 +126,13 @@ public class SegmentMetadataImpl implements SegmentMetadata {
   /// If segment metadata file exists in multiple segment version, load the one in highest segment version.
   public SegmentMetadataImpl(File indexDir)
       throws IOException, ConfigurationException {
-    this(indexDir, null);
-  }
-
-  public SegmentMetadataImpl(File indexDir, @Nullable SegmentSchemaContext schemaContext)
-      throws IOException, ConfigurationException {
     _indexDir = indexDir;
     _columnMetadataMap = new TreeMap<>();
     _schema = new Schema();
 
     PropertiesConfiguration segmentMetadataPropertiesConfiguration =
         SegmentMetadataUtils.getPropertiesConfiguration(indexDir);
-    init(segmentMetadataPropertiesConfiguration, schemaContext);
+    init(segmentMetadataPropertiesConfiguration);
     setTimeInfo(segmentMetadataPropertiesConfiguration);
 
     File creationMetaFile = SegmentDirectoryPaths.findCreationMetaFile(indexDir);
@@ -219,7 +208,7 @@ public class SegmentMetadataImpl implements SegmentMetadata {
     }
   }
 
-  private void init(PropertiesConfiguration segmentMetadata, @Nullable SegmentSchemaContext schemaContext)
+  private void init(PropertiesConfiguration segmentMetadata)
       throws ConfigurationException {
     _segmentName = segmentMetadata.getString(Segment.SEGMENT_NAME);
     _totalDocs = segmentMetadata.getInt(Segment.SEGMENT_TOTAL_DOCS);
@@ -248,7 +237,7 @@ public class SegmentMetadataImpl implements SegmentMetadata {
     if (_totalDocs > 0) {
       for (String column : physicalColumns) {
         ColumnMetadata columnMetadata =
-            ColumnMetadataImpl.fromPropertiesConfiguration(segmentMetadata, _totalDocs, column, schemaContext);
+            ColumnMetadataImpl.fromPropertiesConfiguration(segmentMetadata, _totalDocs, column);
         _columnMetadataMap.put(column, columnMetadata);
         _schema.addField(columnMetadata.getFieldSpec());
       }
@@ -276,8 +265,7 @@ public class SegmentMetadataImpl implements SegmentMetadata {
       }
     } else {
       for (String column : physicalColumns) {
-        ColumnMetadata columnMetadata =
-            EmptyColumnMetadata.fromPropertiesConfiguration(segmentMetadata, column, schemaContext);
+        ColumnMetadata columnMetadata = EmptyColumnMetadata.fromPropertiesConfiguration(segmentMetadata, column);
         _columnMetadataMap.put(column, columnMetadata);
         _schema.addField(columnMetadata.getFieldSpec());
       }

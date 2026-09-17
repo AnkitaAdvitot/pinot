@@ -53,7 +53,7 @@ public class DefaultSegmentDirectoryLoader implements SegmentDirectoryLoader {
     if (!directory.exists()) {
       return new SegmentLocalFSDirectory(directory);
     }
-    SegmentMetadataImpl metadata = new SegmentMetadataImpl(directory, segmentLoaderContext.getSegmentSchemaContext());
+    SegmentMetadataImpl metadata = new SegmentMetadataImpl(directory);
     return new SegmentLocalFSDirectory(directory, metadata, segmentLoaderContext.getReadMode(),
         segmentLoaderContext);
   }
